@@ -68,6 +68,30 @@ THRESHOLDS = {
     "medium_risk_score": 70.0
 }
 
+# Rule-based Segment Labels
+SEGMENTS = {
+    "STARS": "Stars",
+    "HIGH_ACAD_LOW_PLACE": "High academics / low placement readiness",
+    "SILENT_STRUGGLERS": "Silent strugglers",
+    "DISENGAGING": "Disengaging",
+    "STEADY": "Steady performers"
+}
+
+# Key Driver Indicators and their relative weights in Success Score
+DRIVER_INDICATORS = {
+    "cgpa_norm": ("CGPA", 0.25),
+    "backlogs_norm": ("Backlog clearance", 0.10),
+    "attendance_pct": ("Attendance", 0.20),
+    "coding": ("Coding proficiency", 0.08),
+    "aptitude": ("Aptitude score", 0.07),
+    "mock_interviews_norm": ("Mock interviews", 0.05),
+    "lms_logins_norm": ("LMS activity", 0.05),
+    "assignment_completion_pct": ("Assignment completion", 0.06),
+    "technical_score": ("Technical knowledge", 0.06),
+    "softskill_score": ("Soft skills", 0.04),
+    "feedback_norm": ("Faculty engagement", 0.04)
+}
+
 # Data Normalisation Ranges
 VALUE_BOUNDS = {
     "cgpa": (0.0, 10.0),

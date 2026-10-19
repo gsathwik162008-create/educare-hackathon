@@ -199,9 +199,35 @@ def impute_missing_values(df: pd.DataFrame, file_name: str = "unknown") -> (pd.D
             global_med = df_clean[col].median()
             df_clean[col] = df_clean[col].fillna(global_med if pd.notna(global_med) else 0)
 
-    # Categorical fallbacks
+    # Categorical fallbacks: infer department from student_id roll code or mentor_id
     if "department" in df_clean.columns and df_clean["department"].isna().any():
-        df_clean["department"] = df_clean["department"].fillna("CSE")
+        dept_missing_mask = df_clean["department"].isna()
+        dept_missing_count = int(dept_missing_mask.sum())
+        for idx in df_clean[dept_missing_mask].index:
+            inferred = None
+            if "student_id" in df_clean.columns:
+                sid = str(df_clean.loc[idx, "student_id"]).strip().upper()
+                m = re.match(r"^\d{2}([A-Z]+)\d{3}$", sid)
+                if m:
+                    code = m.group(1)
+                    inferred = DEPARTMENT_MAPPING.get(code)
+            if not inferred and "mentor_id" in df_clean.columns:
+                mentor = str(df_clean.loc[idx, "mentor_id"]).upper()
+                for d_key, d_val in DEPARTMENT_MAPPING.items():
+                    if d_key in mentor:
+                        inferred = d_val
+                        break
+            df_clean.loc[idx, "department"] = inferred if inferred else "CSE"
+
+        log_cleaning_action(
+            file_name=file_name,
+            issue_type="missing_department_inferred",
+            rows_affected=dept_missing_count,
+            action=f"Inferred {dept_missing_count} missing departments from student roll number ID syntax",
+            before_count=before_count,
+            after_count=before_count
+        )
+
     if "mentor_id" in df_clean.columns and df_clean["mentor_id"].isna().any():
         df_clean["mentor_id"] = df_clean["mentor_id"].fillna("FAC_GEN_01")
 
