@@ -218,3 +218,53 @@ def get_interventions_for_user(user: dict, conn=None) -> pd.DataFrame:
         conn.close()
 
     return df
+
+def get_student_by_id_scoped(student_id: str, user: dict, conn=None) -> dict:
+    """
+    Load a single student record with strict role-based access verification:
+    - If user has no permission to view student_id, raises PermissionError.
+    - Returns student record dict if permitted, or raises ValueError if not found.
+    """
+    close_at_end = False
+    if conn is None:
+        conn = sqlite3.connect(DB_PATH)
+        close_at_end = True
+
+    role = user.get("role", "").upper()
+    sid = str(student_id).strip().upper()
+
+    if role == "ADMIN":
+        query = "SELECT * FROM students_scored WHERE student_id = ?"
+        row = pd.read_sql(query, conn, params=(sid,))
+    elif role == "FACULTY":
+        mid = user.get("mentor_id") or user.get("username")
+        query = "SELECT * FROM students_scored WHERE student_id = ? AND mentor_id = ?"
+        row = pd.read_sql(query, conn, params=(sid, mid))
+    elif role == "STUDENT":
+        own_id = user.get("student_id") or user.get("username")
+        if sid != own_id:
+            if close_at_end:
+                conn.close()
+            raise PermissionError(f"Access Denied: Student '{own_id}' cannot access peer record '{sid}'.")
+        query = "SELECT * FROM students_scored WHERE student_id = ?"
+        row = pd.read_sql(query, conn, params=(sid,))
+    else:
+        if close_at_end:
+            conn.close()
+        raise PermissionError("Access Denied: Unrecognized or missing user role.")
+
+    if close_at_end:
+        conn.close()
+
+    if row.empty:
+        # Check if student exists in database to distinguish between 404 Not Found vs 403 Forbidden
+        chk_conn = sqlite3.connect(DB_PATH)
+        exists = chk_conn.cursor().execute("SELECT COUNT(*) FROM students_scored WHERE student_id = ?", (sid,)).fetchone()[0] > 0
+        chk_conn.close()
+        if exists:
+            raise PermissionError(f"Access Denied: User '{user.get('username')}' (Role: {role}) does not have permission to view student '{sid}'.")
+        else:
+            raise ValueError(f"Student ID '{sid}' not found in database.")
+
+    return row.iloc[0].to_dict()
+
