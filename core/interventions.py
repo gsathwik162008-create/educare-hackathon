@@ -9,9 +9,10 @@ Computes placement skill gaps, bottleneck academic subjects, and action effectiv
 import sqlite3
 import pandas as pd
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timedelta
 from core.config import (
     DB_PATH,
+    DEMO_TODAY,
     INTERVENTION_ACTIONS,
     ROLE_REQUIREMENTS,
     THRESHOLDS
@@ -322,6 +323,7 @@ def initialize_interventions_table(conn=None):
     # Seed initial interventions from students_scored
     scored = pd.read_sql("SELECT * FROM students_scored", conn)
     records = []
+    demo_base_dt = datetime.strptime(DEMO_TODAY, "%Y-%m-%d")
     now_dt = datetime.now()
     now_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
     past_str = "2026-09-15 10:00:00"
@@ -353,8 +355,7 @@ def initialize_interventions_table(conn=None):
                 })
                 owner = details["owner"]
                 timeline = details["timeline"]
-                from datetime import timedelta
-                due_date = (now_dt + timedelta(days=details["days"])).strftime("%Y-%m-%d")
+                due_date = (demo_base_dt + timedelta(days=details["days"])).strftime("%Y-%m-%d")
 
                 # Determine status
                 if sid in ["21CSE089", "22ECE045", "21MECH012", "23CIVIL034", "22EEE071"]:
@@ -394,15 +395,62 @@ def initialize_interventions_table(conn=None):
     if close_at_end:
         conn.close()
 
-def update_intervention_status(intervention_id: int, new_status: str, conn=None) -> bool:
-    """Update status ('pending', 'in progress', 'done') of an intervention record."""
+def update_intervention_status(intervention_id: int, new_status: str, conn=None, user: dict = None) -> bool:
+    """
+    Update status ('pending', 'in progress', 'done') of an intervention record.
+    Verifies that the intervention's student belongs to the user's scope:
+    - FACULTY: own mentor_id
+    - ADMIN: all
+    - STUDENT: refused (PermissionError)
+    Raises PermissionError if unauthorized.
+    """
+    # Gracefully accept user passed in conn position if dict
+    if isinstance(conn, dict) and user is None:
+        user = conn
+        conn = None
+
     close_at_end = False
     if conn is None:
         conn = sqlite3.connect(DB_PATH)
         close_at_end = True
 
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     cursor = conn.cursor()
+
+    if user is not None:
+        role = str(user.get("role", "")).upper()
+        if role == "STUDENT":
+            if close_at_end:
+                conn.close()
+            raise PermissionError("Access Denied: Students are not permitted to update intervention status.")
+        elif role == "FACULTY":
+            # Check intervention student's mentor_id
+            mid = user.get("mentor_id") or user.get("username")
+            row = cursor.execute("""
+                SELECT i.student_id, su.mentor_id
+                FROM interventions i
+                LEFT JOIN students_unified su ON i.student_id = su.student_id
+                WHERE i.id = ?
+            """, (intervention_id,)).fetchone()
+            if not row:
+                if close_at_end:
+                    conn.close()
+                raise ValueError(f"Intervention ID {intervention_id} not found.")
+            st_id, st_mentor = row
+            if st_mentor != mid:
+                if close_at_end:
+                    conn.close()
+                raise PermissionError(
+                    f"Access Denied: Faculty '{user.get('username')}' (mentor: '{mid}') "
+                    f"cannot update intervention {intervention_id} for student '{st_id}' (mentor: '{st_mentor}')."
+                )
+        elif role == "ADMIN":
+            pass
+        else:
+            if close_at_end:
+                conn.close()
+            raise PermissionError(f"Access Denied: Unrecognized or unauthorized user role '{role}'.")
+
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     cursor.execute("""
     UPDATE interventions 
     SET status = ?, updated_at = ?

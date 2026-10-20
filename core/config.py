@@ -12,6 +12,9 @@ RAW_DATA_DIR = DATA_DIR / "raw"
 DB_PATH = DATA_DIR / "campus.db"
 USERS_CSV_PATH = DATA_DIR / "users.csv"
 
+# Global Reference Date for Demos and Time Calculations
+DEMO_TODAY = "2026-10-20"
+
 # Department standardisation mapping
 DEPARTMENT_MAPPING = {
     "CSE": "CSE",

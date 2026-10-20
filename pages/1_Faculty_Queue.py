@@ -10,7 +10,7 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 from datetime import datetime, timedelta
-from core.config import DB_PATH
+from core.config import DB_PATH, DEMO_TODAY
 from core.auth import get_interventions_for_user, get_students_for_user
 from core.interventions import update_intervention_status
 
@@ -97,7 +97,7 @@ if "name" not in interventions_df.columns:
 
 # 3. Dynamic Insight Sentence Calculation
 total_mentees = len(mentees_df)
-today = datetime.now()
+today = datetime.strptime(DEMO_TODAY, "%Y-%m-%d")
 next_week = (today + timedelta(days=7)).strftime("%Y-%m-%d")
 
 # Actions needing action this week: pending/in progress with due_date <= next_week
@@ -230,7 +230,7 @@ else:
         if st.button("💾 Persist Status Update", use_container_width=True):
             conn = sqlite3.connect(DB_PATH)
             for act_id in selected_student_group["action_ids"]:
-                update_intervention_status(act_id, new_status, conn=conn)
+                update_intervention_status(act_id, new_status, user=user, conn=conn)
             conn.close()
             st.success(f"Updated status for {selected_student_group['name']} to '{new_status}'!")
             st.rerun()

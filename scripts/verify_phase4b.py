@@ -89,6 +89,64 @@ def verify():
     assert mech_by_admin["student_id"] == "21MECH012"
     print("   ASSERTION PASSED: Admin has full global visibility.")
 
+    # 7. Test Intervention Status Scoping: FAC_CSE_01 tries to update 21MECH012 intervention
+    print("\n[7] TESTING INTERVENTION STATUS UPDATE SCOPE ENFORCEMENT...")
+    import sqlite3
+    from core.config import DB_PATH, DEMO_TODAY
+    from core.interventions import update_intervention_status
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    # Find an intervention belonging to 21MECH012 (mentored by FAC_MECH_01)
+    mech_int = cursor.execute(
+        "SELECT id, student_id, action, status FROM interventions WHERE student_id = '21MECH012' LIMIT 1"
+    ).fetchone()
+    assert mech_int is not None, "No intervention record found for 21MECH012!"
+    target_int_id, target_sid, target_act, orig_status = mech_int
+    print(f"   Target Intervention ID #{target_int_id} (Student: {target_sid}, Action: '{target_act}', Current Status: '{orig_status}')")
+
+    attempted_status = "done" if orig_status != "done" else "in progress"
+    int_refusal_caught = False
+    try:
+        update_intervention_status(target_int_id, attempted_status, user=fac_cse, conn=conn)
+    except PermissionError as pe:
+        int_refusal_caught = True
+        print(f"   REFUSAL CONFIRMED: Caught expected PermissionError for FAC_CSE_01 on 21MECH012 intervention:")
+        print(f"   >>> {pe}")
+
+    assert int_refusal_caught, "SECURITY FAILURE: FAC_CSE_01 was able to update 21MECH012 intervention!"
+
+    # Verify database status is unchanged
+    status_in_db = cursor.execute("SELECT status FROM interventions WHERE id = ?", (target_int_id,)).fetchone()[0]
+    print(f"   DB Verification: Status before = '{orig_status}', Status in DB now = '{status_in_db}'")
+    assert status_in_db == orig_status, f"DATABASE CORRUPTION: Status changed to {status_in_db} despite refusal!"
+    print("   ASSERTION PASSED: DB status remains unchanged.")
+
+    # STUDENT role attempt to update own intervention should also be refused
+    student_int_refusal_caught = False
+    try:
+        cse_int_id = cursor.execute(
+            "SELECT id FROM interventions WHERE student_id = '21CSE089' LIMIT 1"
+        ).fetchone()[0]
+        update_intervention_status(cse_int_id, "done", user=student_user, conn=conn)
+    except PermissionError as pe:
+        student_int_refusal_caught = True
+        print(f"   REFUSAL CONFIRMED: Student attempt to update intervention refused with: {pe}")
+    assert student_int_refusal_caught, "SECURITY FAILURE: Student was able to update intervention status!"
+
+    # 8. Verify Due Dates Relative to DEMO_TODAY
+    print("\n[8] VERIFYING INTERVENTION DUE DATES RELATIVE TO DEMO_TODAY...")
+    print(f"   DEMO_TODAY constant in config.py: {DEMO_TODAY}")
+    due_dates = [r[0] for r in cursor.execute("SELECT due_date FROM interventions LIMIT 10").fetchall()]
+    print(f"   Sample due dates in DB: {due_dates[:5]}")
+    # All due dates should be >= DEMO_TODAY
+    for dd in due_dates:
+        assert dd >= DEMO_TODAY, f"Due date {dd} is before DEMO_TODAY {DEMO_TODAY}!"
+    print("   ASSERTION PASSED: Intervention due dates are properly positioned relative to DEMO_TODAY.")
+
+    conn.close()
+
     print("\n" + "=" * 80)
     print("PHASE 4B SCOPING REFUSAL TESTS ALL PASSED SUCCESSFULLY")
     print("=" * 80)
