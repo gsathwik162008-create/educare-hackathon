@@ -10,6 +10,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
 RAW_DATA_DIR = DATA_DIR / "raw"
 DB_PATH = DATA_DIR / "campus.db"
+USERS_CSV_PATH = DATA_DIR / "users.csv"
 
 # Department standardisation mapping
 DEPARTMENT_MAPPING = {
@@ -120,3 +121,51 @@ ROLE_REQUIREMENTS = {
     "Core Engineer": {"coding": 45, "aptitude": 65, "technical_score": 80},
     "Consultant / Business Analyst": {"coding": 40, "aptitude": 80, "technical_score": 65}
 }
+
+# Intervention action mapping, target indicators, and realistic score gain caps
+INTERVENTION_ACTIONS = {
+    "attendance_gap": {
+        "action": "Mentor call + parent alert",
+        "condition": lambda r: r["attendance_pct"] < THRESHOLDS["attendance_min"],
+        "max_gain": 15.0 * 0.20,  # +15% attendance * 0.20 weight = +3.0 pts
+        "target_metric": "attendance_pct",
+        "description": "Establish formal attendance contract with mentee and notify guardian"
+    },
+    "coding_gap": {
+        "action": "Coding bootcamp",
+        "condition": lambda r: r["coding"] < 50.0,
+        "max_gain": 25.0 * 0.08,  # +25 coding points * 0.08 weight = +2.0 pts
+        "target_metric": "coding",
+        "description": "Enrol in 4-week data structures and problem-solving bootcamp"
+    },
+    "mock_interview_gap": {
+        "action": "Interview prep",
+        "condition": lambda r: r["mock_interviews"] < 2 and r["year"] in [3, 4],
+        "max_gain": 50.0 * 0.05,  # +2 interviews (*25 norm) * 0.05 weight = +2.5 pts
+        "target_metric": "mock_interviews",
+        "description": "Schedule 2 one-on-one technical mock interviews with industry mentors"
+    },
+    "lms_gap": {
+        "action": "LMS catch-up plan",
+        "condition": lambda r: r["assignment_completion_pct"] < 65.0 or r["lms_logins_avg"] < 6.0,
+        "max_gain": 20.0 * 0.06 + 25.0 * 0.05,  # LMS catch-up gain = +2.45 pts
+        "target_metric": "assignment_completion_pct",
+        "description": "Weekly assignment deadline schedule with mandatory LMS modules"
+    },
+    "engagement_gap": {
+        "action": "Counsellor check-in",
+        "condition": lambda r: r["satisfaction"] < 3.0 or r["faculty_rating"] < 3.0,
+        "max_gain": 25.0 * 0.04,  # +1.0 pt
+        "target_metric": "satisfaction",
+        "description": "Academic counsellor consultation to address well-being and engagement blockers"
+    },
+    "backlog_gap": {
+        "action": "Remedial tutoring",
+        "condition": lambda r: r["backlogs"] > 0,
+        "max_gain": 20.0 * 0.10,  # 1 backlog cleared (*20 norm) * 0.10 weight = +2.0 pts
+        "target_metric": "backlogs",
+        "description": "Departmental faculty office hours for backlog subject clearance"
+    }
+}
+
+LLM_CACHE_PATH = DATA_DIR / "llm_cache.json"

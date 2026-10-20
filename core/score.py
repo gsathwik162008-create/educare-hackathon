@@ -227,13 +227,14 @@ def calculate_trend_deltas(conn, students_df):
     cgpa_deltas = {}
     sem_df = pd.read_sql("SELECT student_id, semester, cgpa FROM semester_history ORDER BY student_id, semester", conn)
     for sid, group in sem_df.groupby("student_id"):
+        # If fewer than 2 semesters of CGPA history, set cgpa_trend_delta to None / 0.0
         if len(group) >= 2:
             last_cgpa = group.iloc[-1]["cgpa"]
             prev_cgpa = group.iloc[-2]["cgpa"]
             delta = (last_cgpa - prev_cgpa) * 10.0
+            cgpa_deltas[sid] = round(float(delta), 1)
         else:
-            delta = 0.0
-        cgpa_deltas[sid] = round(float(delta), 1)
+            cgpa_deltas[sid] = 0.0
 
     # 2. Attendance sub-delta (M3, M4 vs M1, M2)
     att_deltas = {}
@@ -472,16 +473,18 @@ def score_all(verbose=True):
     # 8. Early Warning Classifier Probability
     scored["early_warning_prob"] = train_early_warning_classifier(scored)
 
-    # 9. Priority Ranking for Faculty Intervention Queue
-    # Priority = (100 - success_score) + 25*(AcadRisk == 'High') + 20*(PlaceRisk == 'High') + 10*(PlaceRisk == 'Medium') + max(0, -trend_delta)*2.0
-    priority_score = (
+    # 9. Priority Ranking for Faculty Intervention Queue (Risk Triage Score)
+    # risk_triage_score = (100 - success_score) + 25*(AcadRisk == 'High') + 20*(PlaceRisk == 'High') + 10*(PlaceRisk == 'Medium') + max(0, -trend_delta)*2.0
+    risk_triage_score = (
         (100.0 - scored["success_score"]) +
         (scored["academic_risk"] == "High").astype(int) * 25.0 +
         (scored["placement_risk"] == "High").astype(int) * 20.0 +
         (scored["placement_risk"] == "Medium").astype(int) * 10.0 +
         np.maximum(0.0, -scored["trend_delta"]) * 2.0
     ).round(1)
-    scored["priority_score"] = priority_score
+    scored["risk_triage_score"] = risk_triage_score
+    # Also maintain priority_score alias for backward compatibility
+    scored["priority_score"] = risk_triage_score
 
     # Save to SQLite table `students_scored`
     scored.to_sql("students_scored", conn, if_exists="replace", index=False)
@@ -489,11 +492,11 @@ def score_all(verbose=True):
 
     if verbose:
         print(f"Table 'students_scored' successfully created: {len(scored)} records.")
-        print("\nTop 10 Students by Intervention Priority:")
-        top10 = scored.sort_values(by="priority_score", ascending=False).head(10)
+        print("\nTop 10 Students by Faculty Risk Triage Score:")
+        top10 = scored.sort_values(by="risk_triage_score", ascending=False).head(10)
         display_cols = [
             "student_id", "name", "department", "year", "success_score",
-            "academic_risk", "placement_risk", "priority_score", "risk_reasons"
+            "academic_risk", "placement_risk", "risk_triage_score", "risk_reasons"
         ]
         print(top10[display_cols].to_string(index=False))
 

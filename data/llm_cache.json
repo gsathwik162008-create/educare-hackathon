@@ -1,0 +1,34 @@
+{
+  "21CSE089": {
+    "faculty": "Student Aarav Sharma presents critical academic and placement indicators. Success score is 38.1 with 3 active backlogs, 52.0% attendance, and coding proficiency at 24.0. With only two semesters remaining, prioritized interventions include immediate enrollment in coding bootcamp to bridge practical programming gaps, paired with remedial tutoring for backlog clearance.",
+    "student": "Your current success score is 38.1. Your core coursework and technical assessments show foundational knowledge. Your biggest growth opportunities are coding practice and daily lecture engagement. Taking part in the recommended coding bootcamp and regular mentor check-ins will systematically strengthen your academic trajectory."
+  },
+  "22ECE045": {
+    "faculty": "Student Pooja Patel exhibits a declining academic trajectory with score 44.0. Primary drags are attendance (58.0%) and coding (28.0) across Year 3. Action plan: combine weekly mentor attendance check-ins with structured coding bootcamp and interview preparation sessions.",
+    "student": "Your current success score is 44.0. You have demonstrated solid analytical capabilities in signal processing. Your biggest opportunities for growth are class attendance consistency and algorithmic problem solving. Focusing on targeted practice this month will provide steady score momentum."
+  },
+  "21MECH012": {
+    "faculty": "Student Rahul Verma is in Year 4 with severe backlog drag (4 active backlogs) and low coding assessment (18.0), resulting in score 41.6. Enrolment in coding bootcamp for placement qualification is urgent, paired with remedial tutoring for backlog clearance.",
+    "student": "Your current success score is 41.6. Your mechanical laboratory skills are a clear strength. Your biggest growth opportunities are clearing pending coursework modules and practicing algorithmic coding and aptitude reasoning. Departmental support hours can accelerate your milestone completion."
+  },
+  "23CIVIL034": {
+    "faculty": "Student Sneha Kulkarni is a Year 2 student showing acute attendance distress (49.0%) and multiple backlogs, yielding score 35.4. Immediate mentor intervention, attendance monitoring, and remedial tutoring are required before semester examinations.",
+    "student": "Your current success score is 35.4. Your surveying and design practicals show positive participation. Your biggest growth opportunities are consistent daily lecture attendance and module completion. Your mentor is available to set up a personalized study timetable."
+  },
+  "22EEE071": {
+    "faculty": "Student Vikram Singh holds a success score of 50.0 in Year 3. Academic health is moderate (60.7), but placement readiness is low (29.2) due to 0 mock interviews and coding score 31.0. Primary recommendation: technical coding bootcamp and interview preparation.",
+    "student": "Your current success score is 50.0. Electrical circuit analysis and faculty engagement represent key strengths. Your biggest growth opportunity is preparing for industry interviews and coding evaluations. Joining the upcoming coding bootcamp and interview prep sessions is recommended."
+  },
+  "21CSE001": {
+    "faculty": "Student Aditi Rao maintains top-tier performance (Score 96.1). Exceptional marks across coding (94.0), aptitude (92.0), and 4 completed mock interviews. Recommend nomination for premier placement drives and research fellowship.",
+    "student": "Your current success score is 96.1. Your academic consistency, problem-solving speed, and interview preparation are outstanding. Your primary focus is refining advanced system design projects for competitive placement opportunities."
+  },
+  "22ECE005": {
+    "faculty": "Student Rohan Iyer exhibits strong multi-disciplinary capability (Score 91.8, Academic Health 95.4, Placement Readiness 86.2). Recommend leadership role in departmental hackathon club.",
+    "student": "Your current success score is 91.8. You hold top marks in digital circuits, LMS module completion, and project work. Your next milestone is continuing advanced coding challenges and mentoring peers."
+  },
+  "21MECH003": {
+    "faculty": "Student Ananya Deshmukh shows high academic rigor (Score 89.7) and strong technical ratings (89.0). Excellent candidate for core manufacturing and robotics campus recruitments.",
+    "student": "Your current success score is 89.7. Your engineering mechanics proficiency and sustained attendance represent major pillars of success. Keep up the high standard in your upcoming capstone evaluation."
+  }
+}
