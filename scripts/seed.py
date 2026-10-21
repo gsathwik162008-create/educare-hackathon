@@ -593,23 +593,48 @@ def seed_all():
     
     # 11. semester_history.csv (up to 8 semesters of CGPA / SGPA history)
     sem_records = []
+    eng_ids = {eng["student_id"] for eng in ENGINEERED_STUDENTS}
     for s in students:
-        max_sem = min(8, s["year"] * 2)
-        curr_cgpa = s["cgpa"]
+        max_sem = min(8, int(s["year"]) * 2)
+        target_cgpa = float(s["cgpa"])
+        is_eng = s["student_id"] in eng_ids
         is_at_risk = s["student_id"] in ["21CSE089", "22ECE045", "21MECH012", "23CIVIL034", "22EEE071"]
         
-        running_cgpa = curr_cgpa + (1.2 if is_at_risk else 0.0)
-        for sem in range(1, max_sem + 1):
+        # Build a smooth trajectory ending exactly at target_cgpa in max_sem
+        if max_sem == 1:
+            cgpas = [target_cgpa]
+        else:
             if is_at_risk:
-                sgpa = max(4.0, running_cgpa - (sem * 0.25) + np.random.normal(0, 0.15))
+                start_cgpa = min(9.5, target_cgpa + 1.2)
+            elif is_eng:
+                start_cgpa = max(5.0, target_cgpa - 0.4)
             else:
-                sgpa = np.clip(running_cgpa + np.random.normal(0, 0.2), 4.5, 9.9)
+                start_cgpa = np.clip(target_cgpa + np.random.uniform(-0.3, 0.3), 4.5, 9.8)
+            
+            # Linear trend with subtle noise, pinned at start and end
+            cgpas = np.linspace(start_cgpa, target_cgpa, max_sem)
+            if max_sem > 2:
+                noise = np.random.normal(0, 0.05, max_sem)
+                noise[0] = 0.0
+                noise[-1] = 0.0
+                cgpas = np.clip(cgpas + noise, 3.5, 9.9)
+            cgpas[-1] = target_cgpa  # Guaranteed exact match at final semester
+
+        for sem in range(1, max_sem + 1):
+            curr_c = round(float(cgpas[sem - 1]), 2)
+            if sem == 1:
+                sgpa = curr_c
+            else:
+                prev_c = cgpas[sem - 2]
+                # sem * curr_c - (sem-1)*prev_c approx sgpa
+                sgpa = np.clip(round(float(sem * curr_c - (sem - 1) * prev_c), 2), 2.5, 10.0)
+            
             sem_records.append({
                 "student_id": s["student_id"],
                 "semester": sem,
-                "sgpa": round(float(sgpa), 2),
-                "cgpa": round(float(sgpa * 0.3 + running_cgpa * 0.7), 2),
-                "backlogs": 1 if (is_at_risk and sem >= 3) else 0
+                "sgpa": sgpa,
+                "cgpa": curr_c,
+                "backlogs": int(s.get("backlogs", 0)) if sem == max_sem else (1 if (is_at_risk and sem >= 3) else 0)
             })
     df_sem_hist = inject_mess_to_df(pd.DataFrame(sem_records), "student_id")
     df_sem_hist.to_csv(RAW_DIR / "semester_history.csv", index=False)

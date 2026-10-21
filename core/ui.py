@@ -18,6 +18,22 @@ def load_css():
         with open(CSS_PATH, "r", encoding="utf-8") as f:
             css_content = f.read()
         st.markdown(f"<style>\n{css_content}\n</style>", unsafe_allow_html=True)
+    
+    # Ensure sidebar entry 'app' displays cleanly as 'Home'
+    st.markdown("""
+    <script>
+    const renameSidebar = () => {
+        const links = window.parent.document.querySelectorAll('section[data-testid="stSidebar"] ul li div a span');
+        links.forEach(el => {
+            if (el.textContent.trim().toLowerCase() === 'app') {
+                el.textContent = 'Home';
+            }
+        });
+    };
+    renameSidebar();
+    setInterval(renameSidebar, 300);
+    </script>
+    """, unsafe_allow_html=True)
 
 def render_kpi_card(number, label: str):
     """

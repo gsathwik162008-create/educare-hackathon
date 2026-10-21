@@ -1,22 +1,14 @@
 """
-Smart Campus Analytics - Main Entry Point & Authentication Hub
-Handles user login, bcrypt authentication, session state management,
-and role-based routing for ADMIN, FACULTY, and STUDENT users.
+Smart Campus Analytics - Authentication Hub & Entry Point
+Handles login, then dynamically controls allowed navigation via st.navigation.
+Before login: only login page, no side navigation.
+After login: role-allowed pages with 'Home' as root page.
 """
 
 import streamlit as st
-import pandas as pd
 from core.auth import authenticate_user
 from core.ui import load_css, render_demo_badge
 
-# Streamlit Page Config (no emoji)
-st.set_page_config(
-    page_title="Smart Campus Analytics | Login",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-# Load Institutional Design System
 load_css()
 
 # Session State Initialization
@@ -30,8 +22,8 @@ def logout():
     st.session_state["user"] = None
     st.rerun()
 
-# 1. Unauthenticated View: Login Form
-if not st.session_state["authenticated"]:
+# Unauthenticated Login View Definition
+def login_page():
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         render_demo_badge("DEMO ENVIRONMENT — AUTHENTICATION HUB")
@@ -57,12 +49,28 @@ if not st.session_state["authenticated"]:
 
         st.caption("Access is authenticated via salted bcrypt and strictly role-scoped.")
 
-# 2. Authenticated View: Role-based Landing Stubs & Navigation
+# Configure navigation based on authentication status and role
+if not st.session_state.get("authenticated"):
+    # Before login: Show only the Login page, no pages allowed
+    pg = st.navigation([st.Page(login_page, title="Sign In", icon=None)])
+    pg.run()
 else:
     user = st.session_state["user"]
     role = user.get("role", "").upper()
 
-    # Sidebar user profile & logout
+    # Define role-allowed pages
+    home_p = st.Page("pages/home_page.py", title="Home", icon=None, default=True)
+    queue_p = st.Page("pages/1_Faculty_Queue.py", title="Faculty Queue", icon=None)
+    profile_p = st.Page("pages/2_Student_Profile.py", title="Student Profile", icon=None)
+
+    if role in ["FACULTY", "ADMIN"]:
+        allowed_pages = [home_p, queue_p, profile_p]
+    elif role == "STUDENT":
+        allowed_pages = [home_p]
+    else:
+        allowed_pages = [home_p]
+
+    # Sidebar profile & log out button
     with st.sidebar:
         st.subheader("Logged In")
         st.write(f"**{user['name']}**")
@@ -75,30 +83,5 @@ else:
         if st.button("Log Out", use_container_width=True):
             logout()
 
-    # Route by role
-    if role == "FACULTY":
-        st.title("Faculty Advisory Portal")
-        st.info(f"Signed in as advisor {user['name']} ({user['mentor_id']}).")
-        st.markdown("""
-        ### Next Step
-        Please navigate to **1_Faculty_Queue** in the left sidebar to view and manage your prioritized mentee intervention tasks.
-        """)
-
-    elif role == "ADMIN":
-        st.title("Institution Administration Console")
-        st.info(f"Signed in as {user['name']} with global cohort oversight.")
-        st.markdown("""
-        ### Available Views
-        - **1_Faculty_Queue**: View the full institution-wide intervention backlog and triage status across all departments.
-        """)
-
-    elif role == "STUDENT":
-        st.title("Student Growth Portal")
-        st.info(f"Welcome, {user['name']} (Roll ID: {user['student_id']}).")
-        st.markdown("""
-        Your personalized academic indicators and growth milestones are scoped strictly to your account.
-        Student profile details will become active in Phase 4 Part 3.
-        """)
-
-    else:
-        st.error("Unrecognized user role. Please log out and sign in with valid credentials.")
+    pg = st.navigation(allowed_pages)
+    pg.run()

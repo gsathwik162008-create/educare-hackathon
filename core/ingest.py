@@ -345,13 +345,30 @@ def ingest_all(verbose: bool = True) -> dict:
     raw_sem_hist = pd.read_csv(RAW_DATA_DIR / "semester_history.csv")
     df_sem_hist = clean_source_dataframe(raw_sem_hist, "semester_history.csv", ["student_id", "semester"])
     df_sem_hist, _ = impute_missing_values(df_sem_hist, "semester_history.csv")
+
+    # Reconcile longitudinal semester_history so final cumulative CGPA equals stated current CGPA in students_unified
+    # Anchor: students_unified.cgpa is the single source of truth for current standing.
+    u_cgpa_map = dict(zip(unified["student_id"], unified["cgpa"]))
+    sem_reconciled_count = 0
+    df_sem_hist = df_sem_hist.sort_values(by=["student_id", "semester"]).reset_index(drop=True)
+    last_sem_indices = df_sem_hist.groupby("student_id")["semester"].idxmax()
+    for sid, idx in last_sem_indices.items():
+        if sid in u_cgpa_map:
+            target_cgpa = float(u_cgpa_map[sid])
+            if abs(df_sem_hist.loc[idx, "cgpa"] - target_cgpa) > 0.00001:
+                df_sem_hist.loc[idx, "cgpa"] = target_cgpa
+                sem_reconciled_count += 1
+
+    log_cleaning_action("semester_history.csv", "CGPA Reconciliation with students_unified", sem_reconciled_count,
+                        "Synchronized final cumulative CGPA to match students_unified.cgpa exactly", len(df_sem_hist), len(df_sem_hist))
+
     df_sem_hist.to_sql("semester_history", conn, if_exists="replace", index=False)
 
     # Save cleaning audit log to SQLite
     df_log = pd.DataFrame(_cleaning_audit_records)
     df_log.to_sql("cleaning_log", conn, if_exists="replace", index=False)
     if verbose:
-        print(f"Table 'cleaning_log' written: {len(df_log)} audit entries")
+        print(f"Table 'cleaning_log' written: {len(df_log)} audit entries (reconciled {sem_reconciled_count} student history records)")
 
     conn.close()
     

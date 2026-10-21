@@ -483,8 +483,6 @@ def score_all(verbose=True):
         np.maximum(0.0, -scored["trend_delta"]) * 2.0
     ).round(1)
     scored["risk_triage_score"] = risk_triage_score
-    # Also maintain priority_score alias for backward compatibility
-    scored["priority_score"] = risk_triage_score
 
     # Save to SQLite table `students_scored`
     scored.to_sql("students_scored", conn, if_exists="replace", index=False)

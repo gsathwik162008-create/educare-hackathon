@@ -225,6 +225,11 @@ section[data-testid="stSidebar"] a:hover {
     color: #005EB8 !important;
 }
 
+/* Format sidebar navigation links cleanly */
+section[data-testid="stSidebar"] ul li div a span {
+    font-weight: 500;
+}
+
 /* 9. Panels, Cards & Forms */
 .panel-card {
     background-color: #FFFFFF;

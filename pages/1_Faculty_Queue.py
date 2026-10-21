@@ -15,11 +15,6 @@ from core.auth import get_interventions_for_user, get_students_for_user
 from core.interventions import update_intervention_status
 from core.ui import load_css, render_kpi_card, render_insight_header, render_demo_badge
 
-st.set_page_config(
-    page_title="Faculty Intervention Queue | Smart Campus Analytics",
-    layout="wide"
-)
-
 # Load Institutional Design System
 load_css()
 
@@ -67,19 +62,40 @@ students_due_soon = interventions_df[due_soon_mask]["student_id"].nunique()
 insight_sentence = f"Cohort Summary: {total_mentees} mentees in assigned scope. {students_due_soon} students require intervention action within the next 7 days."
 render_insight_header(insight_sentence)
 
+# Group all mentees to calculate student-level intervention status
+# Each mentee is categorized into: Pending, In Progress, Completed, or No Action Needed
+mentee_ids = set(mentees_df["student_id"])
+int_student_groups = interventions_df.groupby("student_id")["status"].apply(list).to_dict()
+
+mentees_pending = 0
+mentees_in_prog = 0
+mentees_done = 0
+mentees_no_action = 0
+
+for mid in mentee_ids:
+    if mid not in int_student_groups:
+        mentees_no_action += 1
+    else:
+        st_list = int_student_groups[mid]
+        if all(s == "done" for s in st_list):
+            mentees_done += 1
+        elif any(s == "in progress" for s in st_list):
+            mentees_in_prog += 1
+        else:
+            mentees_pending += 1
+
 # Metric Summary KPI Cards (White background, 1px border #DDE3EC, 4px radius, KPMG navy number, small grey uppercase label)
-c1, c2, c3, c4 = st.columns(4)
+c1, c2, c3, c4, c5 = st.columns(5)
 with c1:
     render_kpi_card(total_mentees, "Total Mentees")
 with c2:
-    pending_cnt = int((interventions_df["status"] == "pending").sum())
-    render_kpi_card(pending_cnt, "Pending Actions")
+    render_kpi_card(mentees_pending, "Pending Action")
 with c3:
-    in_prog_cnt = int((interventions_df["status"] == "in progress").sum())
-    render_kpi_card(in_prog_cnt, "In Progress")
+    render_kpi_card(mentees_in_prog, "In Progress")
 with c4:
-    done_cnt = int((interventions_df["status"] == "done").sum())
-    render_kpi_card(done_cnt, "Completed")
+    render_kpi_card(mentees_done, "Completed")
+with c5:
+    render_kpi_card(mentees_no_action, "No Action Needed")
 
 # 4. Filter and Search Controls
 col_f1, col_f2, col_f3 = st.columns([2, 2, 3])
@@ -158,17 +174,19 @@ with left_col:
             "Action Owner", "Due Date", "Current Status", "Action Priority", "Simulated Gain (+pts)"
         ]
 
-        # Compact table with sticky header and right-aligned numbers
+        # Compact table with sticky header, full scrolling of all rows, and right-aligned numbers
         st.dataframe(
             display_view,
             use_container_width=True,
             hide_index=True,
+            height=450,
             column_config={
                 "Risk Triage Score": st.column_config.NumberColumn(format="%.1f"),
                 "Action Priority": st.column_config.NumberColumn(format="%.2f"),
                 "Simulated Gain (+pts)": st.column_config.NumberColumn(format="+%.1f pts"),
             }
         )
+        st.caption(f"Showing all {len(display_view)} action groups in scrollable table.")
 
 with right_col:
     st.subheader("Update Status")
