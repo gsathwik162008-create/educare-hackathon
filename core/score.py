@@ -18,7 +18,14 @@ from core.config import (
     WEIGHTS,
     THRESHOLDS,
     SEGMENTS,
-    DRIVER_INDICATORS
+    DRIVER_INDICATORS,
+    SEGMENT_RULE_DEFINITIONS,
+    SEGMENT_LIBRARY_ACTION,
+    ACTIONABLE_SEGMENTS,
+    SEGMENT_BLUE_PALETTE,
+    SCATTER_THRESHOLDS,
+    SEGMENT_RULE_THRESHOLDS,
+    PERSONA_LABEL_THRESHOLDS,
 )
 
 def normalize_metrics(df_or_dict):
@@ -277,55 +284,300 @@ def calculate_trend_deltas(conn, students_df):
     res["trend_delta"] = combined
     return res
 
-def segment_students(df):
+def assign_rule_segment(row) -> str:
+    """Assign one mutually exclusive rule-based segment to a scored student row."""
+    rules = SEGMENT_RULE_THRESHOLDS
+    acad = row["academic_health"]
+    place = row["placement_readiness"]
+    att = row["attendance_pct"]
+    cgpa = row["cgpa"]
+    backlogs = row["backlogs"]
+    lms = row["lms_logins_avg"]
+    assign = row["assignment_completion_pct"]
+    score = row["success_score"]
+
+    if (
+        score >= rules["stars"]["success_score_min"]
+        and acad >= rules["stars"]["academic_health_min"]
+        and place >= rules["stars"]["placement_readiness_min"]
+    ):
+        return SEGMENTS["STARS"]
+    if (
+        acad >= rules["high_academics_low_placement"]["academic_health_min"]
+        and place < rules["high_academics_low_placement"]["placement_readiness_max_exclusive"]
+    ):
+        return SEGMENTS["HIGH_ACAD_LOW_PLACE"]
+    if (
+        att < rules["disengaging"]["attendance_pct_max_exclusive"]
+        or lms < rules["disengaging"]["lms_logins_max_exclusive"]
+        or assign < rules["disengaging"]["assignment_completion_pct_max_exclusive"]
+    ):
+        return SEGMENTS["DISENGAGING"]
+    if (
+        att >= rules["silent_strugglers"]["attendance_pct_min"]
+        and (
+            cgpa < rules["silent_strugglers"]["cgpa_max_exclusive"]
+            or backlogs > rules["silent_strugglers"]["backlogs_min_exclusive"]
+        )
+    ):
+        return SEGMENTS["SILENT_STRUGGLERS"]
+    return SEGMENTS["STEADY"]
+
+
+def _trait_phrase(value: float, high: float, low: float, strong: str, weak: str, moderate: str) -> str:
+    if value >= high:
+        return strong
+    if value < low:
+        return weak
+    return moderate
+
+
+def label_cluster_personas(centers_df: pd.DataFrame, overall_means: dict) -> dict:
     """
-    Assign both rule-based behavioral segments and statistical K-Means clusters.
+    Name each K-Means cluster from its centroid traits (e.g. 'Strong academics, weak engagement').
+    Labels never include 'Cluster N'.
     """
-    rule_segments = []
-    for _, row in df.iterrows():
-        acad = row["academic_health"]
-        place = row["placement_readiness"]
+    used = set()
+    labels = {}
+    thresholds = PERSONA_LABEL_THRESHOLDS
+    for c_id, row in centers_df.iterrows():
+        acad_p = _trait_phrase(
+            row["academic_health"], thresholds["academic_health_high"],
+            thresholds["academic_health_low"], "strong academics",
+            "weak academics", "moderate academics",
+        )
+        place_p = _trait_phrase(
+            row["placement_readiness"], thresholds["placement_readiness_high"],
+            thresholds["placement_readiness_low"], "strong placement readiness",
+            "weak placement readiness", "moderate placement readiness",
+        )
         att = row["attendance_pct"]
-        cgpa = row["cgpa"]
-        backlogs = row["backlogs"]
         lms = row["lms_logins_avg"]
-        assign = row["assignment_completion_pct"]
-        score = row["success_score"]
-
-        if score >= 84.0 and acad >= 80.0 and place >= 75.0:
-            rule_segments.append(SEGMENTS["STARS"])
-        elif acad >= 70.0 and place < 50.0:
-            rule_segments.append(SEGMENTS["HIGH_ACAD_LOW_PLACE"])
-        elif att < 70.0 or lms < 5.0 or assign < 55.0:
-            rule_segments.append(SEGMENTS["DISENGAGING"])
-        elif att >= 75.0 and (cgpa < 6.5 or backlogs > 0):
-            rule_segments.append(SEGMENTS["SILENT_STRUGGLERS"])
+        if att >= thresholds["attendance_strong"] and lms >= thresholds["lms_logins_strong"]:
+            eng_p = "strong engagement"
+        elif att < thresholds["attendance_weak"] or lms < thresholds["lms_logins_weak"]:
+            eng_p = "weak engagement"
         else:
-            rule_segments.append(SEGMENTS["STEADY"])
+            eng_p = "moderate engagement"
 
-    # K-Means clustering (4 clusters) with human-readable labels
-    features = df[["academic_health", "placement_readiness", "attendance_pct", "lms_logins_avg"]].copy()
+        diffs = [
+            (abs(row["academic_health"] - overall_means.get("academic_health", 70.0)), acad_p),
+            (abs(row["placement_readiness"] - overall_means.get("placement_readiness", 55.0)), place_p),
+            (abs(att - overall_means.get("attendance_pct", 75.0)) + abs(lms - overall_means.get("lms_logins_avg", 8.0)) * 2.0, eng_p),
+        ]
+        diffs.sort(key=lambda x: x[0], reverse=True)
+        phrases = [diffs[0][1], diffs[1][1]]
+        label = f"{phrases[0].capitalize()}, {phrases[1]}"
+        if label in used:
+            extra = diffs[2][1]
+            label = f"{label}, {extra}"
+        used.add(label)
+        labels[c_id] = label
+    return labels
+
+
+def cluster_students(df: pd.DataFrame):
+    """
+    Fit K-Means on academic health, placement readiness, attendance, and LMS logins.
+    Returns persona labels aligned to df.index, centroid table in original units, and cluster ids.
+    """
+    feature_cols = ["academic_health", "placement_readiness", "attendance_pct", "lms_logins_avg"]
+    features = df[feature_cols].copy()
+    n = len(features)
+    if n == 0:
+        empty = pd.DataFrame(columns=feature_cols)
+        return [], empty, []
+
+    n_clusters = int(min(4, n))
+    if n_clusters < 2:
+        overall = features.mean().to_dict()
+        persona = label_cluster_personas(features.mean().to_frame().T.reset_index(drop=True), overall)[0]
+        centers = pd.DataFrame([overall])
+        centers["persona"] = persona
+        centers["n"] = n
+        return [persona] * n, centers, [0] * n
+
     scaler = StandardScaler()
     scaled_feats = scaler.fit_transform(features)
-    kmeans = KMeans(n_clusters=4, random_state=42, n_init=10)
-    clusters = kmeans.fit_predict(scaled_feats)
+    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+    cluster_ids = kmeans.fit_predict(scaled_feats)
+    centers_df = pd.DataFrame(scaler.inverse_transform(kmeans.cluster_centers_), columns=feature_cols)
+    overall_means = features.mean().to_dict()
+    persona_map = label_cluster_personas(centers_df, overall_means)
+    personas = [persona_map[int(c)] for c in cluster_ids]
+    centers_df["persona"] = centers_df.index.map(persona_map)
+    counts = pd.Series(personas).value_counts()
+    centers_df["n"] = centers_df["persona"].map(counts)
+    return personas, centers_df, cluster_ids.tolist()
 
-    # Label clusters based on center characteristics
-    cluster_centers = pd.DataFrame(scaler.inverse_transform(kmeans.cluster_centers_), columns=features.columns)
-    cluster_labels_map = {}
-    for c_id, row in cluster_centers.iterrows():
-        if row["academic_health"] >= 80 and row["placement_readiness"] >= 75:
-            label = "High Achievers"
-        elif row["academic_health"] < 60 or row["attendance_pct"] < 65:
-            label = "Critical Support Required"
-        elif row["academic_health"] >= 70 and row["placement_readiness"] < 60:
-            label = "Academic Focused / Skill Gap"
-        else:
-            label = "Consistent Progress"
-        cluster_labels_map[c_id] = f"Cluster {c_id}: {label}"
 
-    cluster_labels = [cluster_labels_map[c] for c in clusters]
+def segment_students(df):
+    """
+    Assign both rule-based behavioral segments and statistical K-Means personas.
+    Cluster names are derived from centroids; they are never 'Cluster 1'.
+    """
+    rule_segments = [assign_rule_segment(row) for _, row in df.iterrows()]
+    cluster_labels, _, _ = cluster_students(df)
     return rule_segments, cluster_labels
+
+
+def _first_drag(top_drags: str) -> str:
+    if not top_drags or top_drags == "None":
+        return "None"
+    return top_drags.split(",")[0].strip()
+
+
+def get_segments_analytics(students_df: pd.DataFrame) -> dict:
+    """
+    Compute rule-segment table, insight title, scatter points, K-Means personas,
+    centroids, and cluster-vs-rule cross-tab for a scoped student frame.
+    """
+    df = students_df.copy()
+    if df.empty:
+        return {
+            "insight_title": "No student records available in scope.",
+            "rule_table": pd.DataFrame(),
+            "scatter_df": pd.DataFrame(),
+            "centroids": pd.DataFrame(),
+            "cross_tab": pd.DataFrame(),
+            "cluster_table": pd.DataFrame(),
+            "drill_df": pd.DataFrame(),
+            "drill_by_segment": {},
+            "drill_counts": {},
+            "segment_options": [],
+            "scatter_traces": [],
+            "scatter_ranges": {},
+            "thresholds": SCATTER_THRESHOLDS,
+            "colors": SEGMENT_BLUE_PALETTE,
+            "total": 0,
+        }
+
+    if "segment" not in df.columns:
+        df["segment"] = [assign_rule_segment(row) for _, row in df.iterrows()]
+
+    total = len(df)
+    personas, centers_df, _ = cluster_students(df)
+    df["persona"] = personas
+
+    rows = []
+    for seg_name in [
+        SEGMENTS["STARS"],
+        SEGMENTS["HIGH_ACAD_LOW_PLACE"],
+        SEGMENTS["DISENGAGING"],
+        SEGMENTS["SILENT_STRUGGLERS"],
+        SEGMENTS["STEADY"],
+    ]:
+        sub = df[df["segment"] == seg_name]
+        n = int(len(sub))
+        share = round((n / total) * 100.0, 1) if total else 0.0
+        rows.append({
+            "segment": seg_name,
+            "rule": SEGMENT_RULE_DEFINITIONS.get(seg_name, ""),
+            "count": n,
+            "share_pct": share,
+            "mean_success_score": round(float(sub["success_score"].mean()), 1) if n else None,
+            "mean_academic_health": round(float(sub["academic_health"].mean()), 1) if n else None,
+            "mean_placement_readiness": round(float(sub["placement_readiness"].mean()), 1) if n else None,
+            "mean_attendance_pct": round(float(sub["attendance_pct"].mean()), 1) if n else None,
+            "recommended_action": SEGMENT_LIBRARY_ACTION.get(seg_name, "Interview prep"),
+        })
+    rule_table = pd.DataFrame(rows)
+
+    actionable = rule_table[rule_table["segment"].isin(ACTIONABLE_SEGMENTS)]
+    if actionable.empty or actionable["count"].sum() == 0:
+        insight_title = "No actionable rule segments in the current scope."
+    else:
+        top = actionable.sort_values(["count", "share_pct"], ascending=False).iloc[0]
+        insight_title = (
+            f"{top['segment']} is the largest actionable segment: "
+            f"{int(top['count'])} students ({top['share_pct']:.1f}% of the scoped cohort)."
+        )
+
+    scatter_df = df[[
+        "student_id", "name", "segment", "persona",
+        "academic_health", "placement_readiness", "success_score", "risk_triage_score"
+    ]].copy()
+
+    scatter_traces = []
+    for seg_name in rule_table["segment"]:
+        sub = scatter_df[scatter_df["segment"] == seg_name]
+        if sub.empty:
+            continue
+        centroid = sub[["academic_health", "placement_readiness"]].mean()
+        scatter_traces.append({
+            "segment": seg_name,
+            "x": sub["academic_health"].tolist(),
+            "y": sub["placement_readiness"].tolist(),
+            "student_ids": sub["student_id"].tolist(),
+            "color": SEGMENT_BLUE_PALETTE.get(seg_name, "#00338D"),
+            "centroid_x": float(centroid["academic_health"]),
+            "centroid_y": float(centroid["placement_readiness"]),
+        })
+
+    scatter_ranges = {
+        "academic_health": [
+            min(40.0, float(scatter_df["academic_health"].min()) - 2.0),
+            max(100.0, float(scatter_df["academic_health"].max()) + 2.0),
+        ],
+        "placement_readiness": [
+            min(0.0, float(scatter_df["placement_readiness"].min()) - 2.0),
+            max(100.0, float(scatter_df["placement_readiness"].max()) + 2.0),
+        ],
+    }
+
+    indicator_cols = ["academic_health", "placement_readiness", "attendance_pct", "lms_logins_avg"]
+    cluster_table = (
+        df.groupby("persona")
+        .agg(
+            n=("student_id", "count"),
+            mean_academic_health=("academic_health", "mean"),
+            mean_placement_readiness=("placement_readiness", "mean"),
+            mean_attendance_pct=("attendance_pct", "mean"),
+            mean_lms_logins=("lms_logins_avg", "mean"),
+            mean_success_score=("success_score", "mean"),
+        )
+        .round(1)
+        .reset_index()
+        .sort_values("n", ascending=False)
+    )
+
+    centroids = centers_df.copy()
+    for col in indicator_cols:
+        if col in centroids.columns:
+            centroids[col] = centroids[col].round(1)
+
+    cross_tab = pd.crosstab(df["persona"], df["segment"], margins=True)
+
+    drill_df = df[[
+        "student_id", "name", "segment", "success_score", "top_drags", "risk_triage_score"
+    ]].copy()
+    drill_df["top_drag"] = drill_df["top_drags"].map(_first_drag)
+    drill_df = drill_df.sort_values("risk_triage_score", ascending=False)
+    segment_options = rule_table.loc[rule_table["count"] > 0, "segment"].tolist()
+    drill_columns = ["student_id", "name", "success_score", "top_drag", "risk_triage_score"]
+    drill_by_segment = {
+        seg_name: drill_df.loc[drill_df["segment"] == seg_name, drill_columns].copy()
+        for seg_name in segment_options
+    }
+    drill_counts = {seg_name: len(sub) for seg_name, sub in drill_by_segment.items()}
+
+    return {
+        "insight_title": insight_title,
+        "rule_table": rule_table,
+        "scatter_df": scatter_df,
+        "centroids": centroids,
+        "cross_tab": cross_tab,
+        "cluster_table": cluster_table,
+        "drill_df": drill_df,
+        "drill_by_segment": drill_by_segment,
+        "drill_counts": drill_counts,
+        "segment_options": segment_options,
+        "scatter_traces": scatter_traces,
+        "scatter_ranges": scatter_ranges,
+        "thresholds": SCATTER_THRESHOLDS,
+        "colors": SEGMENT_BLUE_PALETTE,
+        "total": total,
+    }
 
 def calculate_data_confidence(df):
     """

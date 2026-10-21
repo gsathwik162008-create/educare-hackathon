@@ -81,6 +81,78 @@ SEGMENTS = {
     "STEADY": "Steady performers"
 }
 
+# Plain-language rule definitions shown next to segment counts (faculty/admin only)
+SEGMENT_RULE_DEFINITIONS = {
+    "Stars": "Success score at least 84, academic health at least 80, and placement readiness at least 75.",
+    "High academics / low placement readiness": "Academic health at least 70 while placement readiness is below 50.",
+    "Disengaging": "Attendance below 70 percent, weekly LMS logins below 5, or assignment completion below 55 percent.",
+    "Silent strugglers": "Attendance at least 75 percent, but CGPA below 6.5 or at least one active backlog.",
+    "Steady performers": "Does not meet the Stars, high-academics/low-placement, disengaging, or silent-struggler rules.",
+}
+
+# One recommended action per rule segment, taken from INTERVENTION_ACTIONS
+SEGMENT_LIBRARY_ACTION = {
+    "Stars": "Interview prep",
+    "High academics / low placement readiness": "Coding bootcamp",
+    "Disengaging": "Mentor call + parent alert",
+    "Silent strugglers": "Remedial tutoring",
+    "Steady performers": "Counsellor check-in",
+}
+
+# Segments that warrant intervention (used for the insight title)
+ACTIONABLE_SEGMENTS = [
+    "High academics / low placement readiness",
+    "Disengaging",
+    "Silent strugglers",
+]
+
+# Blue palette for segment colouring (not risk red/amber/green)
+SEGMENT_BLUE_PALETTE = {
+    "Stars": "#001F5C",
+    "High academics / low placement readiness": "#00338D",
+    "Steady performers": "#005EB8",
+    "Silent strugglers": "#4C8ED9",
+    "Disengaging": "#8FB3E0",
+}
+
+SCATTER_THRESHOLDS = {
+    "academic_health": 70.0,
+    "placement_readiness": 50.0,
+}
+
+SEGMENT_RULE_THRESHOLDS = {
+    "stars": {
+        "success_score_min": 84.0,
+        "academic_health_min": 80.0,
+        "placement_readiness_min": 75.0,
+    },
+    "high_academics_low_placement": {
+        "academic_health_min": 70.0,
+        "placement_readiness_max_exclusive": 50.0,
+    },
+    "disengaging": {
+        "attendance_pct_max_exclusive": 70.0,
+        "lms_logins_max_exclusive": 5.0,
+        "assignment_completion_pct_max_exclusive": 55.0,
+    },
+    "silent_strugglers": {
+        "attendance_pct_min": 75.0,
+        "cgpa_max_exclusive": 6.5,
+        "backlogs_min_exclusive": 0,
+    },
+}
+
+PERSONA_LABEL_THRESHOLDS = {
+    "academic_health_high": 75.0,
+    "academic_health_low": 60.0,
+    "placement_readiness_high": 65.0,
+    "placement_readiness_low": 50.0,
+    "attendance_strong": 80.0,
+    "lms_logins_strong": 10.0,
+    "attendance_weak": 70.0,
+    "lms_logins_weak": 6.0,
+}
+
 # Key Driver Indicators and their relative weights in Success Score
 DRIVER_INDICATORS = {
     "cgpa_norm": ("CGPA", 0.25),
