@@ -331,6 +331,26 @@ def ingest_all(verbose: bool = True) -> dict:
     
     # 2. attendance_history
     raw_att_hist = pd.read_csv(RAW_DATA_DIR / "attendance_history.csv")
+    
+    # Infer missing month where a student has missing month(s) from 1-4
+    raw_att_hist["student_id"] = standardise_student_id(raw_att_hist["student_id"], "attendance_history.csv")
+    all_months = ["Month 1", "Month 2", "Month 3", "Month 4"]
+    inferred_month_count = 0
+    
+    for sid, group in raw_att_hist.groupby("student_id"):
+        null_indices = group[group["month"].isna()].index
+        if len(null_indices) > 0:
+            present = set(group["month"].dropna())
+            missing = [m for m in all_months if m not in present]
+            for i, null_idx in enumerate(null_indices):
+                if i < len(missing):
+                    raw_att_hist.loc[null_idx, "month"] = missing[i]
+                    inferred_month_count += 1
+    
+    log_cleaning_action("attendance_history.csv", "missing_key_inferred", inferred_month_count,
+                        "Inferred missing month values from 1-4 sequence for students with blank months",
+                        len(raw_att_hist), len(raw_att_hist))
+
     df_att_hist = clean_source_dataframe(raw_att_hist, "attendance_history.csv", ["student_id", "month"])
     df_att_hist, _ = impute_missing_values(df_att_hist, "attendance_history.csv")
     df_att_hist.to_sql("attendance_history", conn, if_exists="replace", index=False)

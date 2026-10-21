@@ -673,5 +673,160 @@ def get_cohort_scores_distribution(conn=None) -> pd.Series:
 
     return df["success_score"]
 
+def get_trends_data(scoped_student_ids: list = None, conn=None) -> dict:
+    """
+    Computes aggregated trend datasets for longitudinal analytics:
+    - semester_cgpa_by_cohort: mean CGPA per admission year cohort (years 1..4) across valid semesters
+    - monthly_attendance_by_dept: mean attendance across 4 months per department
+    - weekly_lms_by_dept: mean logins across 8 weeks per department
+    - department_comparison: summary comparison table with right-aligned metrics and student counts
+    - insight_title: dynamic statement of which department's attendance fell most over the last 2 months
+    """
+    close_after = False
+    if conn is None:
+        conn = sqlite3.connect(DB_PATH)
+        close_after = True
+
+    # 1. Base scoped students
+    if scoped_student_ids is not None:
+        placeholders = ",".join("?" for _ in scoped_student_ids)
+        query = f"SELECT student_id, department, year, cgpa, attendance_pct, lms_logins_avg, assignment_completion_pct FROM students_scored WHERE student_id IN ({placeholders})"
+        students_df = pd.read_sql(query, conn, params=list(scoped_student_ids))
+    else:
+        students_df = pd.read_sql(
+            "SELECT student_id, department, year, cgpa, attendance_pct, lms_logins_avg, assignment_completion_pct FROM students_scored",
+            conn
+        )
+
+    if students_df.empty:
+        if close_after:
+            conn.close()
+        return {
+            "insight_title": "No student records available in scope.",
+            "semester_cgpa_by_cohort": pd.DataFrame(),
+            "monthly_attendance_by_dept": pd.DataFrame(),
+            "weekly_lms_by_dept": pd.DataFrame(),
+            "department_comparison": pd.DataFrame()
+        }
+
+    valid_sids = set(students_df["student_id"])
+
+    # 2. Semester CGPA trend by admission year cohort (not pooled)
+    sem_raw = pd.read_sql("SELECT student_id, semester, cgpa FROM semester_history WHERE semester IS NOT NULL", conn)
+    sem_df = sem_raw[sem_raw["student_id"].isin(valid_sids)].copy()
+    sem_df = pd.merge(sem_df, students_df[["student_id", "year"]], on="student_id")
+    # Only keep completed or enrolled semesters for each cohort (semester <= year * 2)
+    sem_df = sem_df[sem_df["semester"] <= sem_df["year"] * 2]
+    sem_piv = sem_df.pivot_table(index="year", columns="semester", values="cgpa", aggfunc="mean").round(2)
+
+    # 3. Monthly Attendance by Department (4 months)
+    att_raw = pd.read_sql("SELECT student_id, month, attendance_pct FROM attendance_history WHERE month IS NOT NULL", conn)
+    att_df = att_raw[att_raw["student_id"].isin(valid_sids)].copy()
+    att_df = pd.merge(att_df, students_df[["student_id", "department"]], on="student_id")
+    att_piv = att_df.pivot_table(index="department", columns="month", values="attendance_pct", aggfunc="mean").round(2)
+    
+    # Ensure standard month column order
+    ordered_months = [m for m in ["Month 1", "Month 2", "Month 3", "Month 4"] if m in att_piv.columns]
+    att_piv = att_piv[ordered_months]
+
+    # Insight title calculation:
+    # Only claim a decline if change is >= 2.0 percentage points (attendance) or >= 0.3 (CGPA).
+    # Otherwise show "Attendance is stable across departments (range X to Y%)".
+    insight_title = "Attendance is stable across departments."
+    if "Month 2" in att_piv.columns and "Month 4" in att_piv.columns:
+        drops = (att_piv["Month 4"] - att_piv["Month 2"]).round(2)
+        worst_dept = drops.idxmin()
+        worst_delta = drops.min()
+        m2_val = att_piv.loc[worst_dept, "Month 2"]
+        m4_val = att_piv.loc[worst_dept, "Month 4"]
+        
+        all_m4 = att_piv["Month 4"]
+        range_min = all_m4.min()
+        range_max = all_m4.max()
+
+        if worst_delta <= -2.0:
+            insight_title = f"{worst_dept} department attendance declined most over the last 2 months ({worst_delta:+.2f}%, from {m2_val:.1f}% in Month 2 to {m4_val:.1f}% in Month 4)."
+        else:
+            insight_title = f"Attendance is stable across departments (range {range_min:.1f} to {range_max:.1f}%)."
+
+    # 4. Weekly LMS Logins by Department (8 weeks)
+    lms_raw = pd.read_sql("SELECT student_id, week, logins FROM lms_history WHERE week IS NOT NULL", conn)
+    lms_df = lms_raw[lms_raw["student_id"].isin(valid_sids)].copy()
+    lms_df = pd.merge(lms_df, students_df[["student_id", "department"]], on="student_id")
+    lms_piv = lms_df.pivot_table(index="department", columns="week", values="logins", aggfunc="mean").round(2)
+    ordered_weeks = [w for w in [f"Week {i}" for i in range(1, 9)] if w in lms_piv.columns]
+    lms_piv = lms_piv[ordered_weeks]
+
+    # Insight title & Alerts scanning across all 20 Department x Year groups
+    # Flag: Attendance drop >= 2.0 pts (Month 1 to Month 4) OR LMS drop >= 15% (Weeks 1-4 mean vs Weeks 5-8 mean)
+    flagged_alerts = []
+    
+    # Merge students with attendance and lms
+    s_full = pd.merge(students_df[["student_id", "department", "year"]], att_df[["student_id", "month", "attendance_pct"]], on="student_id")
+    s_lms = pd.merge(students_df[["student_id", "department", "year"]], lms_df[["student_id", "week", "logins"]], on="student_id")
+
+    for (dept, yr), grp in students_df.groupby(["department", "year"]):
+        sids = set(grp["student_id"])
+        group_name = f"{dept} Year {int(yr)}"
+        
+        # Attendance Month 1 to Month 4
+        att_sub = s_full[s_full["student_id"].isin(sids)]
+        m1_m = att_sub[att_sub["month"] == "Month 1"]["attendance_pct"].mean()
+        m4_m = att_sub[att_sub["month"] == "Month 4"]["attendance_pct"].mean()
+        att_drop = round(m4_m - m1_m, 2) if (pd.notna(m1_m) and pd.notna(m4_m)) else 0.0
+
+        # LMS Weeks 1-4 vs Weeks 5-8
+        lms_sub = s_lms[s_lms["student_id"].isin(sids)]
+        w1_4 = lms_sub[lms_sub["week"].isin(["Week 1", "Week 2", "Week 3", "Week 4"])]["logins"].mean()
+        w5_8 = lms_sub[lms_sub["week"].isin(["Week 5", "Week 6", "Week 7", "Week 8"])]["logins"].mean()
+        lms_drop_pct = round(((w5_8 - w1_4) / w1_4) * 100.0, 1) if (pd.notna(w1_4) and w1_4 > 0 and pd.notna(w5_8)) else 0.0
+
+        flags = []
+        if att_drop <= -2.0:
+            flags.append(f"Attendance declined {abs(att_drop):.1f} pts ({m1_m:.1f}% in M1 to {m4_m:.1f}% in M4)")
+        if lms_drop_pct <= -15.0:
+            flags.append(f"LMS logins dropped {abs(lms_drop_pct):.1f}% ({w1_4:.1f} W1-4 to {w5_8:.1f} W5-8)")
+
+        if flags:
+            flagged_alerts.append({
+                "group": group_name,
+                "dept": dept,
+                "year": int(yr),
+                "att_drop": att_drop,
+                "lms_drop_pct": lms_drop_pct,
+                "reasons": "; ".join(flags)
+            })
+
+    # Compose insight title from flagged cohorts
+    if flagged_alerts:
+        alert_names = [f"{a['group']} ({a['reasons']})" for a in flagged_alerts]
+        insight_title = f"Multi-Cohort Alert: Significant engagement decline detected in {', '.join(alert_names)}."
+    else:
+        all_m4 = att_piv["Month 4"] if "Month 4" in att_piv.columns else pd.Series()
+        r_min = all_m4.min() if not all_m4.empty else 0.0
+        r_max = all_m4.max() if not all_m4.empty else 0.0
+        insight_title = f"Attendance is stable across departments (range {r_min:.1f} to {r_max:.1f}%)."
+
+    # 5. Department comparison table
+    dept_comp = students_df.groupby("department").agg(
+        n=("student_id", "count"),
+        mean_cgpa=("cgpa", "mean"),
+        mean_attendance=("attendance_pct", "mean"),
+        mean_lms=("lms_logins_avg", "mean"),
+        mean_assignment=("assignment_completion_pct", "mean")
+    ).round(2).reset_index()
+
+    if close_after:
+        conn.close()
+
+    return {
+        "insight_title": insight_title,
+        "flagged_alerts": flagged_alerts,
+        "semester_cgpa_by_cohort": sem_piv,
+        "monthly_attendance_by_dept": att_piv,
+        "weekly_lms_by_dept": lms_piv,
+        "department_comparison": dept_comp
+    }
+
 if __name__ == "__main__":
     score_all(verbose=True)

@@ -556,13 +556,20 @@ def seed_all():
     # 9. attendance_history.csv (monthly attendance over past 4 months)
     att_records = []
     months = ["Month 1", "Month 2", "Month 3", "Month 4"]
+    eng_ids = {eng["student_id"] for eng in ENGINEERED_STUDENTS}
     for s in students:
         base_att = s["attendance_pct"]
-        # If student is engineered at-risk, trend is decreasing
-        is_at_risk = s["student_id"] in ["21CSE089", "22ECE045", "21MECH012", "23CIVIL034", "22EEE071"]
+        sid = s["student_id"]
+        is_at_risk = sid in ["21CSE089", "22ECE045", "21MECH012", "23CIVIL034", "22EEE071"]
+        is_eng = sid in eng_ids
+        is_mech_y2 = (s["department"] == "Mech" and int(s["year"]) == 2 and not is_eng)
+
         for i, m in enumerate(months):
             if is_at_risk:
                 m_att = max(35.0, base_att + (3 - i) * 3.5 + np.random.normal(0, 1.5))
+            elif is_mech_y2:
+                # Mech Year 2 attendance declining by about 8 points across months 1 to 4 (+4 in M1 to -4 in M4)
+                m_att = np.clip(base_att + (1.5 - i) * 2.7 + np.random.normal(0, 1.5), 30.0, 100.0)
             else:
                 m_att = np.clip(base_att + np.random.normal(0, 2.5), 40.0, 100.0)
             att_records.append({
@@ -578,8 +585,17 @@ def seed_all():
     lms_records = []
     for s in students:
         base_logins = s["lms_logins_avg"]
+        sid = s["student_id"]
+        is_eng = sid in eng_ids
+        is_cse_y3 = (s["department"] == "CSE" and int(s["year"]) == 3 and not is_eng)
+
         for w in range(1, 9):
-            logins = max(0, int(round(np.random.normal(base_logins, 1.5))))
+            if is_cse_y3 and w >= 5:
+                # CSE Year 3 LMS logins falling about 25% over weeks 5 to 8
+                eff_base = base_logins * 0.75
+            else:
+                eff_base = base_logins
+            logins = max(0, int(round(np.random.normal(eff_base, 1.5))))
             assigns = 1 if (logins > 3 and random.random() < 0.7) else 0
             lms_records.append({
                 "student_id": s["student_id"],
