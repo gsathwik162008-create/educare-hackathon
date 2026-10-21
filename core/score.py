@@ -26,6 +26,7 @@ from core.config import (
     SCATTER_THRESHOLDS,
     SEGMENT_RULE_THRESHOLDS,
     PERSONA_LABEL_THRESHOLDS,
+    VALUE_BOUNDS,
 )
 
 def normalize_metrics(df_or_dict):
@@ -656,6 +657,150 @@ def score_student(indicators_dict, cohort_means=None):
         "drags_list": drags_list,
         "strengths_list": strengths_list
     }
+
+
+def _require_student_portal_scope(student_id: str, user: dict) -> str:
+    """Require a portal request to match the authenticated student's own ID."""
+    if not user or str(user.get("role", "")).upper() != "STUDENT":
+        raise PermissionError("Access denied: this view is only available to student accounts.")
+
+    sid = str(student_id).strip().upper()
+    own_id = str(user.get("student_id") or user.get("username") or "").strip().upper()
+    if not own_id or sid != own_id:
+        raise PermissionError(f"Access denied: student account '{own_id}' cannot access '{sid}'.")
+    return sid
+
+
+def get_student_portal_data(student_id: str, user: dict, conn=None) -> dict:
+    """Return only the signed-in student's rows and aggregate cohort benchmarks."""
+    sid = _require_student_portal_scope(student_id, user)
+    close_after = conn is None
+    if conn is None:
+        conn = sqlite3.connect(DB_PATH)
+
+    try:
+        from core.auth import get_student_by_id_scoped
+        from core.explain import explain_for_student
+        from core.interventions import get_student_specific_interventions
+
+        student = get_student_by_id_scoped(sid, user, conn=conn)
+        student_fields = [
+            "student_id", "name", "department", "year", "success_score",
+            "academic_health", "placement_readiness", "cgpa", "backlogs",
+            "attendance_pct", "coding", "aptitude", "mock_interviews",
+            "lms_logins_avg", "assignment_completion_pct", "technical_score",
+            "softskill_score", "satisfaction", "faculty_rating", "top_strengths",
+        ]
+        student_view = {key: student.get(key) for key in student_fields}
+
+        semester_history = pd.read_sql(
+            "SELECT semester, sgpa, cgpa FROM semester_history WHERE student_id = ? ORDER BY semester",
+            conn,
+            params=(sid,),
+        )
+        cohort_cgpa = pd.read_sql(
+            "SELECT semester, AVG(cgpa) AS cohort_average_cgpa "
+            "FROM semester_history GROUP BY semester ORDER BY semester",
+            conn,
+        )
+        semester_history = semester_history.merge(cohort_cgpa, on="semester", how="left")
+
+        subject_marks = pd.read_sql(
+            "SELECT subject_code, subject_name, semester, marks, attendance "
+            "FROM subject_marks WHERE student_id = ? ORDER BY semester DESC, subject_code",
+            conn,
+            params=(sid,),
+        )
+        interventions = pd.read_sql(
+            "SELECT action, status, due_date FROM interventions "
+            "WHERE student_id = ? ORDER BY due_date, id",
+            conn,
+            params=(sid,),
+        )
+        cohort_average_score = pd.read_sql(
+            "SELECT AVG(success_score) AS cohort_average_score FROM students_scored",
+            conn,
+        ).iloc[0]["cohort_average_score"]
+
+        _, _, _, recommended = get_student_specific_interventions(student)
+        next_steps = []
+        for item in recommended:
+            next_steps.append({
+                "action": item["action"],
+                "description": item["description"],
+                "status": "Suggested",
+                "due_date": "",
+                "source": "Suggested for you",
+            })
+        for _, item in interventions.iterrows():
+            next_steps.append({
+                "action": item["action"],
+                "description": "A step assigned by your mentor.",
+                "status": str(item["status"]).title(),
+                "due_date": str(item["due_date"]),
+                "source": "Mentor assigned",
+            })
+
+        steps_df = pd.DataFrame(
+            next_steps,
+            columns=["action", "description", "status", "due_date", "source"],
+        )
+        supportive_text = explain_for_student(student)
+
+        return {
+            "student": student_view,
+            "supportive_text": supportive_text,
+            "cohort_average_score": float(cohort_average_score or 0.0),
+            "score_vs_cohort_average": round(
+                float(student["success_score"]) - float(cohort_average_score or 0.0),
+                1,
+            ),
+            "semester_history": semester_history,
+            "subject_marks": subject_marks,
+            "next_steps": steps_df,
+        }
+    finally:
+        if close_after:
+            conn.close()
+
+
+def score_student_portal_scenario(student_id: str, user: dict, scenario: dict, conn=None) -> dict:
+    """Score an estimated scenario after verifying the signed-in student's ID."""
+    sid = _require_student_portal_scope(student_id, user)
+    close_after = conn is None
+    if conn is None:
+        conn = sqlite3.connect(DB_PATH)
+
+    try:
+        from core.auth import get_student_by_id_scoped
+
+        student = get_student_by_id_scoped(sid, user, conn=conn)
+        allowed_metrics = {
+            "attendance_pct", "coding", "backlogs", "mock_interviews",
+            "assignment_completion_pct",
+        }
+        unknown_metrics = set(scenario) - allowed_metrics
+        if unknown_metrics:
+            raise ValueError(f"Unsupported scenario metrics: {sorted(unknown_metrics)}")
+        simulated = dict(student)
+        for metric, value in scenario.items():
+            lower, upper = VALUE_BOUNDS[metric]
+            numeric_value = float(value)
+            if not lower <= numeric_value <= upper:
+                raise ValueError(f"{metric} must be between {lower} and {upper}.")
+            simulated[metric] = numeric_value
+
+        result = score_student(simulated)
+        current_score = float(student["success_score"])
+        simulated_score = float(result["success_score"])
+        return {
+            "current_score": current_score,
+            "simulated_score": simulated_score,
+            "estimated_delta": round(simulated_score - current_score, 1),
+        }
+    finally:
+        if close_after:
+            conn.close()
 
 def score_all(verbose=True):
     """

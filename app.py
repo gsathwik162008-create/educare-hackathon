@@ -65,13 +65,14 @@ else:
     cohort_p = st.Page("pages/3_Cohort_Overview.py", title="Cohort Overview", icon=None)
     trends_p = st.Page("pages/4_Trends.py", title="Trends", icon=None)
     segments_p = st.Page("pages/5_Segments.py", title="Segments", icon=None)
+    student_portal_p = st.Page("pages/6_Student_Portal.py", title="My Portal", icon=None)
 
     if role == "ADMIN":
         allowed_pages = [home_p, queue_p, profile_p, cohort_p, trends_p, segments_p]
     elif role == "FACULTY":
         allowed_pages = [home_p, queue_p, profile_p, trends_p, segments_p]
     elif role == "STUDENT":
-        allowed_pages = [home_p]
+        allowed_pages = [student_portal_p]
     else:
         allowed_pages = [home_p]
 

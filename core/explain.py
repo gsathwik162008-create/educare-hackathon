@@ -68,16 +68,30 @@ def explain_for_student(student_dict):
     # Read prioritized action directly from intervention engine
     action_priority, pot_gain, primary_action, selected_gaps = get_student_specific_interventions(student_dict)
     
+    metric_labels = {
+        "coding": "coding score",
+        "backlogs": "backlog clearance",
+        "attendance_pct": "attendance",
+        "assignment_completion_pct": "assignment completion",
+        "lms_logins_avg": "LMS participation",
+        "mock_interviews": "mock interview practice",
+        "satisfaction": "well-being support",
+    }
     if selected_gaps:
-        opp_list = [f"{g['target_metric'].replace('_pct', '').replace('_', ' ')}" for g in selected_gaps]
-        opportunities = " and ".join(opp_list)
+        primary_metric = selected_gaps[0]["target_metric"]
+        primary_focus = metric_labels.get(primary_metric, "a focused skill")
+        opportunities = f"Your {primary_focus} is the biggest opportunity right now."
+        if len(selected_gaps) > 1:
+            secondary_metric = selected_gaps[1]["target_metric"]
+            secondary_focus = metric_labels.get(secondary_metric, "another area")
+            opportunities += f" Another useful focus is {secondary_focus}."
     else:
-        opportunities = "advanced specialization and project leadership"
+        opportunities = "Advanced specialization and project leadership are useful next goals."
 
     text = (
         f"Your current success score is {score:.1f}. "
         f"Your strongest foundational areas include: {clean_strengths}. "
-        f"Your biggest opportunity for growth is: {opportunities}. "
+        f"{opportunities} "
         f"Recommended next step: {primary_action}. "
         f"Completing this focus area can improve your progress by an estimated +{pot_gain:.1f} points."
     )
