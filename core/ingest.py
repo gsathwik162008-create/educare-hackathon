@@ -399,6 +399,105 @@ def ingest_all(verbose: bool = True) -> dict:
     }
     return stats
 
+
+def get_data_quality_summary(conn=None) -> dict:
+    """Return data-quality KPIs, issue totals, and source counts from cleaning_log."""
+    close_after = conn is None
+    if conn is None:
+        conn = sqlite3.connect(DB_PATH)
+
+    try:
+        log_df = pd.read_sql(
+            "SELECT file, issue_type, rows_affected, before_count, after_count, action "
+            "FROM cleaning_log ORDER BY rowid",
+            conn,
+        )
+    except Exception as exc:
+        if "no such table" not in str(exc).lower():
+            raise
+        log_df = pd.DataFrame(columns=[
+            "file", "issue_type", "rows_affected", "before_count", "after_count", "action"
+        ])
+    finally:
+        if close_after:
+            conn.close()
+
+    for column in ("rows_affected", "before_count", "after_count"):
+        log_df[column] = pd.to_numeric(log_df[column], errors="coerce").fillna(0).astype(int)
+
+    issue_totals = (
+        log_df.groupby("issue_type", dropna=False, as_index=False)["rows_affected"]
+        .sum()
+        .sort_values("rows_affected", ascending=False)
+        .reset_index(drop=True)
+    )
+    duplicate_mask = log_df["issue_type"].eq("duplicate_rows")
+    missing_mask = log_df["issue_type"].eq("missing_values")
+    invalid_mask = log_df["issue_type"].eq("invalid_value_imputed")
+    ids_mask = log_df["issue_type"].eq("inconsistent_id_format")
+    total_fix_actions = int(len(log_df))
+    total_rows_affected = int(log_df["rows_affected"].sum())
+    duplicate_rows_removed = int(log_df.loc[duplicate_mask, "rows_affected"].sum())
+    missing_values_imputed = int(log_df.loc[missing_mask, "rows_affected"].sum())
+    invalid_values_imputed = int(log_df.loc[invalid_mask, "rows_affected"].sum())
+    standardised_ids = int(log_df.loc[ids_mask, "rows_affected"].sum())
+    source_count = int(log_df["file"].nunique())
+
+    insight_title = (
+        f"{total_fix_actions:,} fixes applied across {source_count} sources: "
+        f"{duplicate_rows_removed:,} duplicates removed, "
+        f"{invalid_values_imputed:,} invalid values imputed, "
+        f"{standardised_ids:,} IDs standardised."
+    )
+
+    main_source_files = [
+        "academic.csv", "attendance.csv", "lms.csv", "engagement.csv",
+        "placement.csv", "skills.csv", "feedback.csv",
+    ]
+    source_counts = log_df.loc[
+        log_df["file"].isin(main_source_files) & duplicate_mask,
+        ["file", "before_count", "after_count"],
+    ].drop_duplicates(subset=["file"], keep="first")
+    source_counts["file"] = pd.Categorical(
+        source_counts["file"], categories=main_source_files, ordered=True
+    )
+    source_counts = source_counts.sort_values("file").reset_index(drop=True)
+    source_counts["file"] = source_counts["file"].astype(str)
+
+    attendance_rows = log_df.loc[
+        log_df["issue_type"].eq("missing_key_inferred")
+        & log_df["file"].eq("attendance_history.csv")
+    ]
+    cgpa_rows = log_df.loc[
+        log_df["issue_type"].str.contains("CGPA Reconciliation", case=False, na=False)
+    ]
+
+    attendance_caption = None
+    if not attendance_rows.empty:
+        row = attendance_rows.iloc[0]
+        attendance_caption = f"{int(row['rows_affected']):,} attendance months inferred: {row['action']}"
+
+    cgpa_caption = None
+    if not cgpa_rows.empty:
+        row = cgpa_rows.iloc[0]
+        cgpa_caption = f"{int(row['rows_affected']):,} CGPA reconciliations: {row['action']}"
+
+    return {
+        "insight_title": insight_title,
+        "total_fix_actions": total_fix_actions,
+        "total_rows_affected": total_rows_affected,
+        "distinct_issue_types": int(log_df["issue_type"].nunique()),
+        "duplicate_rows_removed": duplicate_rows_removed,
+        "missing_values_imputed": missing_values_imputed,
+        "invalid_values_imputed": invalid_values_imputed,
+        "standardised_ids": standardised_ids,
+        "issue_totals": issue_totals,
+        "log_entries": log_df,
+        "main_source_counts": source_counts,
+        "attendance_caption": attendance_caption,
+        "cgpa_caption": cgpa_caption,
+    }
+
 if __name__ == "__main__":
     results = ingest_all(verbose=True)
     print("\nIngestion pipeline successfully completed:")

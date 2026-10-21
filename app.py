@@ -66,9 +66,10 @@ else:
     trends_p = st.Page("pages/4_Trends.py", title="Trends", icon=None)
     segments_p = st.Page("pages/5_Segments.py", title="Segments", icon=None)
     student_portal_p = st.Page("pages/6_Student_Portal.py", title="My Portal", icon=None)
+    data_quality_p = st.Page("pages/7_Data_Quality.py", title="Data Quality", icon=None)
 
     if role == "ADMIN":
-        allowed_pages = [home_p, queue_p, profile_p, cohort_p, trends_p, segments_p]
+        allowed_pages = [home_p, queue_p, profile_p, cohort_p, trends_p, segments_p, data_quality_p]
     elif role == "FACULTY":
         allowed_pages = [home_p, queue_p, profile_p, trends_p, segments_p]
     elif role == "STUDENT":
