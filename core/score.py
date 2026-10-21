@@ -500,5 +500,178 @@ def score_all(verbose=True):
 
     return scored
 
+def get_cohort_summary_kpis(conn=None) -> dict:
+    """
+    Computes cohort-level summary KPIs directly from the SQLite database:
+    - total_students
+    - mean_success_score
+    - academic_risk_high_count
+    - placement_risk_high_count
+    - low_confidence_count
+    - insight_sentence
+    """
+    close_after = False
+    if conn is None:
+        conn = sqlite3.connect(DB_PATH)
+        close_after = True
+
+    df = pd.read_sql(
+        "SELECT student_id, success_score, department, year, academic_risk, placement_risk, low_confidence FROM students_scored",
+        conn
+    )
+    if close_after:
+        conn.close()
+
+    total_students = int(len(df))
+    mean_score = float(df["success_score"].mean()) if total_students > 0 else 0.0
+    acad_high = int((df["academic_risk"] == "High").sum())
+    place_high = int((df["placement_risk"] == "High").sum())
+    low_conf = int((df["low_confidence"] == 1).sum())
+
+    # Dynamic insight statement: "N students below score 50; X% concentrated in <department/year>"
+    # Strictly claim concentration ONLY when the group's share of low scorers exceeds its share of all students
+    below_50 = df[df["success_score"] < 50.0]
+    n_below = int(len(below_50))
+    if n_below > 0:
+        # Find group with highest excess share: (share_of_low_scorers - share_of_all_students)
+        groups = []
+        for (dept, yr), g in df.groupby(["department", "year"]):
+            g_total = len(g)
+            g_below = len(below_50[(below_50["department"] == dept) & (below_50["year"] == yr)])
+            share_total = (g_total / total_students) * 100.0
+            share_below = (g_below / n_below) * 100.0
+            diff = share_below - share_total
+            groups.append({
+                "name": f"{dept} Year {int(yr)}",
+                "below_count": g_below,
+                "total_count": g_total,
+                "share_below": share_below,
+                "share_total": share_total,
+                "diff": diff
+            })
+        
+        # Sort by excess share of low scorers over total cohort share
+        top_group = max(groups, key=lambda x: x["diff"])
+        
+        if top_group["diff"] > 0:
+            insight_sentence = (
+                f"{n_below} students below score 50; {top_group['below_count']} ({top_group['share_below']:.1f}%) "
+                f"concentrated in {top_group['name']} (group represents {top_group['total_count']} of {total_students} students, {top_group['share_total']:.1f}%)."
+            )
+        else:
+            insight_sentence = f"{n_below} students below score 50, evenly distributed across cohort departments and years."
+    else:
+        insight_sentence = "All students maintain success scores at or above baseline 50."
+
+    return {
+        "total_students": total_students,
+        "mean_success_score": round(mean_score, 2),
+        "academic_risk_high_count": acad_high,
+        "placement_risk_high_count": place_high,
+        "low_confidence_count": low_conf,
+        "insight_sentence": insight_sentence
+    }
+
+def get_department_year_heatmap(conn=None) -> dict:
+    """
+    Returns department x year mean success score matrix and count matrix.
+    Includes cell note flag when sample size n < 15.
+    """
+    close_after = False
+    if conn is None:
+        conn = sqlite3.connect(DB_PATH)
+        close_after = True
+
+    df = pd.read_sql("SELECT department, year, success_score FROM students_scored", conn)
+    if close_after:
+        conn.close()
+
+    df["year"] = df["year"].astype(int)
+    mean_pivot = df.pivot_table(index="department", columns="year", values="success_score", aggfunc="mean").round(2)
+    count_pivot = df.pivot_table(index="department", columns="year", values="success_score", aggfunc="count").fillna(0).astype(int)
+
+    # Format annotations: "Score\n(n=Count)*" if count < 15
+    annotations = []
+    has_small_sample = False
+    for dept in mean_pivot.index:
+        row_ann = []
+        for yr in mean_pivot.columns:
+            m_val = mean_pivot.loc[dept, yr]
+            c_val = count_pivot.loc[dept, yr]
+            flag = "*" if c_val < 15 else ""
+            if c_val < 15:
+                has_small_sample = True
+            row_ann.append(f"{m_val:.1f}{flag}<br><span style='font-size:10px;'>n={c_val}</span>")
+        annotations.append(row_ann)
+
+    return {
+        "departments": list(mean_pivot.index),
+        "years": [f"Year {y}" for y in mean_pivot.columns],
+        "years_raw": list(mean_pivot.columns),
+        "mean_matrix": mean_pivot.values.tolist(),
+        "count_matrix": count_pivot.values.tolist(),
+        "annotations": annotations,
+        "has_small_sample": has_small_sample,
+        "mean_df": mean_pivot,
+        "count_df": count_pivot
+    }
+
+def get_segment_distribution(conn=None) -> pd.DataFrame:
+    """
+    Returns rule-based segment distribution counts and percentages.
+    """
+    close_after = False
+    if conn is None:
+        conn = sqlite3.connect(DB_PATH)
+        close_after = True
+
+    df = pd.read_sql("SELECT segment, count(*) as count FROM students_scored GROUP BY segment ORDER BY count DESC", conn)
+    if close_after:
+        conn.close()
+
+    total = df["count"].sum()
+    df["percentage"] = (df["count"] / total * 100.0).round(1)
+    return df
+
+def get_top_triage_students(limit: int = 10, conn=None) -> pd.DataFrame:
+    """
+    Returns top N students ordered by faculty risk triage score.
+    """
+    close_after = False
+    if conn is None:
+        conn = sqlite3.connect(DB_PATH)
+        close_after = True
+
+    query = """
+        SELECT student_id, name, department, year, success_score, risk_triage_score,
+               academic_risk, placement_risk, risk_reasons
+        FROM students_scored
+        ORDER BY risk_triage_score DESC
+        LIMIT ?
+    """
+    df = pd.read_sql(query, conn, params=(limit,))
+    if close_after:
+        conn.close()
+
+    df["year"] = df["year"].astype(int)
+    df["success_score"] = df["success_score"].round(1)
+    df["risk_triage_score"] = df["risk_triage_score"].round(1)
+    return df
+
+def get_cohort_scores_distribution(conn=None) -> pd.Series:
+    """
+    Returns the raw series of success scores for histogram plotting.
+    """
+    close_after = False
+    if conn is None:
+        conn = sqlite3.connect(DB_PATH)
+        close_after = True
+
+    df = pd.read_sql("SELECT success_score FROM students_scored", conn)
+    if close_after:
+        conn.close()
+
+    return df["success_score"]
+
 if __name__ == "__main__":
     score_all(verbose=True)

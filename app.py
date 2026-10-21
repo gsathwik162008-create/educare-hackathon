@@ -62,8 +62,11 @@ else:
     home_p = st.Page("pages/home_page.py", title="Home", icon=None, default=True)
     queue_p = st.Page("pages/1_Faculty_Queue.py", title="Faculty Queue", icon=None)
     profile_p = st.Page("pages/2_Student_Profile.py", title="Student Profile", icon=None)
+    cohort_p = st.Page("pages/3_Cohort_Overview.py", title="Cohort Overview", icon=None)
 
-    if role in ["FACULTY", "ADMIN"]:
+    if role == "ADMIN":
+        allowed_pages = [home_p, queue_p, profile_p, cohort_p]
+    elif role == "FACULTY":
         allowed_pages = [home_p, queue_p, profile_p]
     elif role == "STUDENT":
         allowed_pages = [home_p]
